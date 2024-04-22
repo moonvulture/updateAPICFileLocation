@@ -1,0 +1,103 @@
+---
+
+- name: changing linux service account password
+  hosts: backupServer
+  gather_facts: false
+  vars:
+    ansible_user: user_account
+    ansible_ssh_private_key_file: ~/.ssh/rsa_key
+    ansible_become: false
+  tasks:
+
+    # generate a new 20 character password and saving it as generated_password variable. it is written to dev/null so it doesnt get saved to a log or temp directory
+    - name: create lowercase 20 character name for APIC
+      ansible.builtin.set_fact:
+        # password: "apic-{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=8, encrypt='sha256_crypt') }}"
+        generated_password: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits', 'punctuation'], length=20) }}"
+      delegate_to: localhost
+
+    # reading in the current user_account password from the current.txt file so we can change the password below
+    - ansible.builtin.set_fact:
+        current_password: "{{ lookup('ansible.builtin.file', 'current.txt') }}"
+
+    - name: debug
+      debug: 
+        var: current_password
+
+    - name: debug
+      debug: 
+        var: generated_password
+
+    # this runs the shell command passwd, and enters the current unix password from the current.txt file, and changes it to the new generated password
+    - name: Change user_account password
+      expect:
+        command: passwd
+        responses:
+          (?i)Current password: "{{ current_password }}"
+          (?i)New password: "{{ generated_password }}"
+          (?i)New password (again): "{{ generated_password }}"
+
+    # replaces the current.txt password with the newly generated password
+    - name: adding pass to file
+      ansible.builtin.copy:
+        dest: current.txt
+        content: "{{ generated_password }}"
+      delegate_to: localhost
+
+# this starts the APIC remote file path configuration
+- name: changing password
+  hosts: APIC
+  gather_facts: false
+  
+  tasks:
+
+    # this reads in the newly generated password from current.txt as the variable generated_password
+    - ansible.builtin.set_fact:
+        generated_password: "{{ lookup('ansible.builtin.file', 'current.txt') }}"
+
+    - name: debug
+      debug: 
+        var: generated_password
+
+    # this updates the remote location settings for GlobalSyncTask
+    - name: Change Remote Path GlobalSyncTask Password
+      cisco.aci.aci_file_remote_path:
+        host: "{{ ansible_host }}"
+        username: "{{ ansible_user }}"
+        password: "{{ ansible_ssh_pass }}"
+        name: "GlobalSyncTask"
+        description: "Spectrum Global Sync"
+        remote_host: 10.10.10.10
+        remote_port: 22
+        remote_protocol: scp
+        remote_user: "user_account"
+        auth_type: password
+        remote_password: "{{ generated_password }}"
+        remote_path: "/backups/GlobalSyncTaskExport"
+        management_epg: "oob-default"
+        state: present
+      delegate_to: localhost
+
+    # this updates the remote location settings for ConfigBackup
+    - name: Change Remote Path ConfigBackupPassword
+      cisco.aci.aci_file_remote_path:
+        host: "{{ ansible_host }}"
+        username: "{{ ansible_user }}"
+        password: "{{ ansible_ssh_pass }}"
+        name: "ConfigBackup"
+        description: "backup"
+        remote_host: 10.10.10.10
+        remote_port: 22
+        remote_protocol: scp
+        remote_user: "user_account"
+        auth_type: password
+        remote_password: "{{ generated_password }}"
+        remote_path: "/aci/backup"
+        management_epg: "oob-default"
+        state: present
+      delegate_to: localhost
+      register: output
+
+    # - name: debug
+    #   debug: 
+    #     var: generated_password | password_hash('sha512')
