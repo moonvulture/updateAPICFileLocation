@@ -1,0 +1,7 @@
+---
+ansible_connection: local
+ansible_user: "{{ vault_ansible_user}}"
+ansible_ssh_pass: "{{ vault_ansible_ssh_pass }}"
+ansible_httpapi_validate_certs: False
+ansible_httpapi_use_ssl: True
+ansible_httpapi_use_proxy: True
